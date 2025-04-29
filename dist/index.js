@@ -41124,8 +41124,6 @@ var __webpack_exports__ = {};
 const external_node_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
 // EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
 var core = __nccwpck_require__(7484);
-// EXTERNAL MODULE: ./node_modules/@actions/github/lib/github.js
-var github = __nccwpck_require__(3228);
 ;// CONCATENATED MODULE: ./src/utils/general.ts
 function filterCoverageByFile(coverage) {
     return coverage.map(item => ({
@@ -41362,6 +41360,8 @@ function getLineInfoFromHeaderLine(line) {
     return { deletionStartingLineNumber: 0, additionStartingLineNumber: 0 };
 }
 
+// EXTERNAL MODULE: ./node_modules/@actions/github/lib/github.js
+var github = __nccwpck_require__(3228);
 ;// CONCATENATED MODULE: ./node_modules/universal-user-agent/index.js
 function getUserAgent() {
   if (typeof navigator === "object" && "userAgent" in navigator) {
@@ -51340,12 +51340,30 @@ var dist_bundle_OAuthApp = OAuthApp.defaults({ Octokit: dist_bundle_Octokit });
 
 
 
+
 class GithubUtil {
-    constructor(token, baseUrl) {
-        if (!token) {
-            throw new Error('GITHUB_TOKEN is missing');
+    constructor(token, baseUrl, appId, privateKey) {
+        if (!token && (!appId || !privateKey)) {
+            throw new Error('Either GITHUB_TOKEN or both APP_ID and PRIVATE_KEY are required');
         }
-        this.client = new dist_bundle_Octokit({ auth: token, baseUrl });
+        if (appId && privateKey) {
+            // GitHub App authentication
+            this.client = new dist_bundle_Octokit({
+                authStrategy: createAppAuth,
+                auth: {
+                    appId,
+                    privateKey,
+                    installationId: github.context.payload.installation?.id
+                },
+                baseUrl
+            });
+            core.info('Using GitHub App authentication');
+        }
+        else {
+            // Token-based authentication
+            this.client = new dist_bundle_Octokit({ auth: token, baseUrl });
+            core.info('Using token-based authentication');
+        }
     }
     getPullRequestRef() {
         const pullRequest = github.context.payload.pull_request;
@@ -51354,15 +51372,22 @@ class GithubUtil {
             : github.context.ref.replace('refs/heads/', '');
     }
     async getPullRequestDiff() {
-        const pull_number = github.context.issue.number;
-        const response = await this.client.rest.pulls.get({
+        const pr_num = github.context.payload.pull_request?.number;
+        if (!pr_num) {
+            throw new Error('Pull request number is missing');
+        }
+        const payload = {
             ...github.context.repo,
-            pull_number,
+            pull_number: pr_num,
             mediaType: {
                 format: 'diff'
             }
-        });
-        const fileLines = parseGitDiff(response.data);
+        };
+        core.info(`Payload: ${JSON.stringify(payload)}`);
+        const resp = await this.client.rest.pulls.get(payload);
+        const diff_data = resp.data;
+        core.info(`Diff data: ${diff_data}`);
+        const fileLines = parseGitDiff(diff_data);
         const prFiles = {};
         for (const item of fileLines) {
             prFiles[item.filename] = coalesceLineNumbers(item.addedLines);
@@ -51459,18 +51484,20 @@ class GithubUtil {
 
 
 
-
 const SUPPORTED_FORMATS = ['lcov', 'clover', 'go'];
 /** Starting Point of the Github Action*/
 async function play() {
     try {
-        if (github.context.eventName !== 'pull_request') {
-            core.info('Pull request not detected. Exiting early.');
-            return;
-        }
         core.info('Performing Code Coverage Analysis');
-        const GITHUB_TOKEN = core.getInput('GITHUB_TOKEN', { required: true });
-        const GITHUB_BASE_URL = core.getInput('GITHUB_BASE_URL');
+        // Support both token and GitHub App authentication
+        const TOKEN = core.getInput('TOKEN');
+        const API_BASE_URL = core.getInput('API_BASE_URL');
+        const APP_ID = core.getInput('APP_ID');
+        const PRIVATE_KEY = core.getInput('PRIVATE_KEY');
+        // Validate that we have either token or app authentication
+        if (!TOKEN && (!APP_ID || !PRIVATE_KEY)) {
+            throw new Error('Either TOKEN or both APP_ID and PRIVATE_KEY must be provided');
+        }
         const COVERAGE_FILE_PATH = core.getInput('COVERAGE_FILE_PATH', {
             required: true
         });
@@ -51520,7 +51547,8 @@ async function play() {
                 core.info(JSON.stringify(item));
             }
         }
-        const githubUtil = new GithubUtil(GITHUB_TOKEN, GITHUB_BASE_URL);
+        // Initialize Github client with either token or app authentication
+        const githubUtil = new GithubUtil(TOKEN, API_BASE_URL, APP_ID, PRIVATE_KEY);
         // 3. Get current pull request files
         const pullRequestFiles = await githubUtil.getPullRequestDiff();
         if (debugOpts['pr_lines_added']) {
@@ -51535,8 +51563,10 @@ async function play() {
         core.info('Annotation done');
     }
     catch (error) {
-        if (error instanceof Error)
+        if (error instanceof Error) {
             core.setFailed(error.message);
+            console.error(error.stack);
+        }
         core.info(JSON.stringify(error));
     }
 }

@@ -8,15 +8,40 @@ import {
   intersectLineRanges
 } from './general'
 import {Octokit} from 'octokit'
+import {createAppAuth} from '@octokit/auth-app'
 
 export class GithubUtil {
   private client: Octokit
 
-  constructor(token: string, baseUrl: string) {
-    if (!token) {
-      throw new Error('GITHUB_TOKEN is missing')
+  constructor(
+    token: string,
+    baseUrl: string,
+    appId?: string,
+    privateKey?: string
+  ) {
+    if (!token && (!appId || !privateKey)) {
+      throw new Error(
+        'Either GITHUB_TOKEN or both APP_ID and PRIVATE_KEY are required'
+      )
     }
-    this.client = new Octokit({auth: token, baseUrl})
+
+    if (appId && privateKey) {
+      // GitHub App authentication
+      this.client = new Octokit({
+        authStrategy: createAppAuth,
+        auth: {
+          appId,
+          privateKey,
+          installationId: github.context.payload.installation?.id
+        },
+        baseUrl
+      })
+      core.info('Using GitHub App authentication')
+    } else {
+      // Token-based authentication
+      this.client = new Octokit({auth: token, baseUrl})
+      core.info('Using token-based authentication')
+    }
   }
 
   getPullRequestRef(): string {
@@ -27,15 +52,26 @@ export class GithubUtil {
   }
 
   async getPullRequestDiff(): Promise<PullRequestFiles> {
-    const pull_number = github.context.issue.number
-    const response = await this.client.rest.pulls.get({
+    const pr_num = github.context.payload.pull_request?.number
+    if (!pr_num) {
+      throw new Error('Pull request number is missing')
+    }
+
+    const payload = {
       ...github.context.repo,
-      pull_number,
+      pull_number: pr_num,
       mediaType: {
         format: 'diff'
       }
-    })
-    const fileLines = diff.parseGitDiff(response.data as unknown as string)
+    }
+
+    core.info(`Payload: ${JSON.stringify(payload)}`)
+
+    const resp = await this.client.rest.pulls.get(payload)
+    const diff_data = resp.data as unknown as string
+
+    core.info(`Diff data: ${diff_data}`)
+    const fileLines = diff.parseGitDiff(diff_data)
     const prFiles: PullRequestFiles = {}
     for (const item of fileLines) {
       prFiles[item.filename] = coalesceLineNumbers(item.addedLines)

@@ -1,5 +1,6 @@
-import {test, expect} from 'vitest'
+import {test, expect, expectTypeOf} from 'vitest'
 import {GithubUtil} from '../../src/utils/github'
+import {Octokit} from 'octokit'
 
 test('github init successfully', async function () {
   const githubUtil = new GithubUtil('1234', 'https://api.github.com')
@@ -8,8 +9,35 @@ test('github init successfully', async function () {
 
 test('github init to throw error', function () {
   expect(() => new GithubUtil('', 'https://api.github.com')).toThrowError(
-    'GITHUB_TOKEN is missing'
+    'Either GITHUB_TOKEN or both APP_ID and PRIVATE_KEY are required'
   )
+})
+
+test.skip('octokit gets diff', async () => {
+  const tok = process.env.GITHUB_TOKEN
+  if (!tok) {
+    throw new Error('GITHUB_TOKEN is not set')
+  }
+
+  const client = new Octokit({
+    auth: tok,
+    baseUrl: 'https://api.github.com'
+  })
+
+  const resp = await client.rest.pulls.get({
+    ...{owner: 'MichaelDyeTryout', repo: 'golang-test-lab'},
+    pull_number: 7,
+    mediaType: {
+      format: 'diff'
+    }
+  })
+
+  expect(resp.status).toBe(200)
+  expect(resp.data).toBeDefined()
+  expectTypeOf(resp.data).toBeString
+
+  const dd = resp.data as unknown as string
+  dd.split('\n')
 })
 
 test('build annotations', function () {

@@ -12,13 +12,20 @@ const SUPPORTED_FORMATS = ['lcov', 'clover', 'go']
 /** Starting Point of the Github Action*/
 export async function play(): Promise<void> {
   try {
-    if (github.context.eventName !== 'pull_request') {
-      core.info('Pull request not detected. Exiting early. Was: ${github.context.eventName}')
-      return
-    }
     core.info('Performing Code Coverage Analysis')
-    const GITHUB_TOKEN = core.getInput('GITHUB_TOKEN', {required: true})
-    const GITHUB_BASE_URL = core.getInput('GITHUB_BASE_URL')
+    // Support both token and GitHub App authentication
+    const TOKEN = core.getInput('TOKEN')
+    const API_BASE_URL = core.getInput('API_BASE_URL')
+    const APP_ID = core.getInput('APP_ID')
+    const PRIVATE_KEY = core.getInput('PRIVATE_KEY')
+
+    // Validate that we have either token or app authentication
+    if (!TOKEN && (!APP_ID || !PRIVATE_KEY)) {
+      throw new Error(
+        'Either TOKEN or both APP_ID and PRIVATE_KEY must be provided'
+      )
+    }
+
     const COVERAGE_FILE_PATH = core.getInput('COVERAGE_FILE_PATH', {
       required: true
     })
@@ -82,7 +89,9 @@ export async function play(): Promise<void> {
         core.info(JSON.stringify(item))
       }
     }
-    const githubUtil = new GithubUtil(GITHUB_TOKEN, GITHUB_BASE_URL)
+
+    // Initialize Github client with either token or app authentication
+    const githubUtil = new GithubUtil(TOKEN, API_BASE_URL, APP_ID, PRIVATE_KEY)
 
     // 3. Get current pull request files
     const pullRequestFiles = await githubUtil.getPullRequestDiff()
@@ -101,7 +110,10 @@ export async function play(): Promise<void> {
     })
     core.info('Annotation done')
   } catch (error) {
-    if (error instanceof Error) core.setFailed(error.message)
+    if (error instanceof Error) {
+      core.setFailed(error.message)
+      console.error(error.stack)
+    }
     core.info(JSON.stringify(error))
   }
 }
