@@ -13,8 +13,7 @@ const SUPPORTED_FORMATS = ['lcov', 'clover', 'go']
 export async function play(): Promise<void> {
   try {
     if (github.context.eventName !== 'pull_request') {
-      core.info(github.context.eventName)
-      core.info('Pull request not detected. Exiting early.')
+      core.info('Pull request not detected. Exiting early. Was: ${github.context.eventName}')
       return
     }
     core.info('Performing Code Coverage Analysis')
